@@ -3,11 +3,16 @@ name: AI Issue Worker
 on:
   issues:
     types: [opened, edited, reopened]
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Release version"
+        required: true
+        default: "4.2.2"
 
 permissions:
   contents: write
   issues: write
-  pull-requests: write
 
 jobs:
   ai-work:
@@ -22,84 +27,183 @@ jobs:
           git config user.name "familybudget-ai-bot"
           git config user.email "actions@github.com"
 
-      - name: Prepare task
-        run: |
-          cat > task.txt <<'EOF'
-          You are working on the WordPress plugin repository portallcomua/familybudget.
-
-          IMPORTANT RULES:
-          - Do not remove existing plugin functionality.
-          - Keep changes small and safe.
-          - If Release-Version is provided, update the plugin version.
-          - Main plugin file: family-budget-network.php
-          - WordPress plugin slug/folder: family-budget-network
-          - Release ZIP name: family-budget-network.zip
-          - GitHub release asset must be used by updater if possible.
-          - Do not put old_version, current, .github, test files, README.md, Todo.md, changelog.md or old ZIP files inside plugin ZIP.
-
-          ISSUE TITLE:
-          ${{ github.event.issue.title }}
-
-          ISSUE BODY:
-          ${{ github.event.issue.body }}
-          EOF
-
-          cat > issue_body.txt <<'EOF'
-          ${{ github.event.issue.body }}
-          EOF
-
-      - name: Extract release version
+      - name: Get version
         id: version
         run: |
-          VERSION=$(grep -Eio '^Release-Version:[[:space:]]*[0-9A-Za-z._-]+' issue_body.txt | head -1 | sed -E 's/Release-Version:[[:space:]]*//I' | tr -d '\r')
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if [ -n "$VERSION" ]; then
-            echo "has_release=true" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.release_version }}"
           else
-            echo "has_release=false" >> "$GITHUB_OUTPUT"
+            echo "${{ github.event.issue.body }}" > issue_body.txt
+            VERSION=$(grep -Eio '^Release-Version:[[:space:]]*[0-9A-Za-z._-]+' issue_body.txt | head -1 | sed -E 's/Release-Version:[[:space:]]*//I')
           fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Install Aider
-        run: |
-          python -m pip install --upgrade pip
-          pip install aider-chat
-
-      - name: Run Aider
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          aider --yes --auto-commits --message-file task.txt
-
-      - name: Force plugin version if Release-Version exists
-        if: steps.version.outputs.has_release == 'true'
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          if [ -f "family-budget-network.php" ]; then
-            perl -0777 -i -pe "s/Version:\s*.*$/Version: ${VERSION}/m" family-budget-network.php
-          fi
-
-          git add family-budget-network.php || true
-          git commit -m "chore: prepare release ${VERSION}" || echo "No version changes"
-
-      - name: Push changes
-        run: |
-          git push || echo "Nothing to push"
-
-      - name: Build plugin ZIP
-        if: steps.version.outputs.has_release == 'true'
+      - name: Rebuild plugin structure
         run: |
           VERSION="${{ steps.version.outputs.version }}"
 
-          rm -rf build dist family-budget-network.zip
-          mkdir -p build/family-budget-network
+          mkdir -p old_version
+          mkdir -p family-budget-network
 
-          cp family-budget-network.php build/family-budget-network/
-
-          for item in admin public includes assets templates languages vendor license uninstall.php readme.txt; do
-            if [ -e "$item" ]; then
-              cp -R "$item" build/family-budget-network/
+          if [ -f "family-budget-network-4.1.0-beta.zip" ]; then
+            rm -rf /tmp/fbn
+            mkdir -p /tmp/fbn
+            unzip -oq "family-budget-network-4.1.0-beta.zip" -d /tmp/fbn
+            SRC=$(find /tmp/fbn -type f -name "family-budget-network.php" | head -1 | xargs dirname)
+            if [ -n "$SRC" ]; then
+              cp -R "$SRC"/. family-budget-network/
+              mv -f family-budget-network-4.1.0-beta.zip old_version/
             fi
-          done
+          fi
+
+          if [ -f "family-budget-network.php" ]; then
+            cp -f family-budget-network.php old_version/root-family-budget-network.php
+            if [ ! -f "family-budget-network/family-budget-network.php" ]; then
+              cp -f family-budget-network.php family-budget-network/family-budget-network.php
+            fi
+            rm -f family-budget-network.php
+          fi
+
+          if [ ! -f "family-budget-network/family-budget-network.php" ]; then
+            echo "ERROR: main plugin file not found"
+            exit 1
+          fi
+
+          python3 - <<PY
+          from pathlib import Path
+          import re
+
+          version = "$VERSION"
+          p = Path("family-budget-network/family-budget-network.php")
+          s = p.read_text(encoding="utf-8", errors="ignore")
+
+          s = re.sub(r"(\\*\\s*Version:\\s*).*", r"\\g<1>" + version, s)
+          s = re.sub(r"(\\*\\s*Author:\\s*).*", r"\\g<1>UAServer", s)
+
+          s = re.sub(
+              r"\\$plugin_slug\\s*=\\s*plugin_basename\\(__FILE__\\);",
+              "$plugin_slug = 'family-budget-network';\\n    $plugin_file = 'family-budget-network/family-budget-network.php';",
+              s
+          )
+
+          s = re.sub(
+              r"\\$plugin_info->slug\\s*=\\s*\\$plugin_slug;",
+              "$plugin_info->slug = 'family-budget-network';\\n        $plugin_info->plugin = 'family-budget-network/family-budget-network.php';",
+              s
+          )
+
+          s = re.sub(
+              r"\\$checked_data->response\\[\\$plugin_slug\\]\\s*=\\s*\\$plugin_info;",
+              "$checked_data->response['family-budget-network/family-budget-network.php'] = $plugin_info;",
+              s
+          )
+
+          if "fbm_github_plugin_info" not in s:
+              s += r'''
+
+add_filter('plugins_api', 'fbm_github_plugin_info', 20, 3);
+function fbm_github_plugin_info($result, $action, $args) {
+    if ($action !== 'plugin_information' || empty($args->slug) || $args->slug !== 'family-budget-network') {
+        return $result;
+    }
+
+    $response = wp_remote_get('https://api.github.com/repos/portallcomua/familybudget/releases/latest', array(
+        'timeout' => 15,
+        'headers' => array(
+            'Accept' => 'application/vnd.github+json',
+            'User-Agent' => 'FamilyBudgetUpdater'
+        )
+    ));
+
+    if (is_wp_error($response)) {
+        return $result;
+    }
+
+    $release_data = json_decode(wp_remote_retrieve_body($response), true);
+    if (empty($release_data['tag_name'])) {
+        return $result;
+    }
+
+    $info = new stdClass();
+    $info->name = 'Family Budget Network PRO';
+    $info->slug = 'family-budget-network';
+    $info->version = ltrim($release_data['tag_name'], 'v');
+    $info->author = '<a href="https://github.com/portallcomua">UAServer</a>';
+    $info->homepage = 'https://github.com/portallcomua/familybudget';
+    $info->sections = array(
+        'description' => 'Керування бюджетом, комунальними платежами, інтернетом та мобільним.',
+        'changelog' => !empty($release_data['body']) ? nl2br(esc_html($release_data['body'])) : ''
+    );
+
+    if (!empty($release_data['assets'])) {
+        foreach ($release_data['assets'] as $asset) {
+            if (!empty($asset['name']) && $asset['name'] === 'family-budget-network.zip') {
+                $info->download_link = $asset['browser_download_url'];
+                break;
+            }
+        }
+    }
+
+    return $info;
+}
+'''
+
+          p.write_text(s, encoding="utf-8")
+          PY
+
+          rm -f AI_TEST.md changelog.md
+
+          cat > AI_RULES.md <<EOF
+          # AI Rules
+
+          Active source:
+          family-budget-network/
+
+          Main plugin file:
+          family-budget-network/family-budget-network.php
+
+          Never edit root family-budget-network.php.
+          Never use current/ as active source.
+          Build release ZIP only from family-budget-network/.
+          ZIP must contain family-budget-network/family-budget-network.php.
+
+          Updater:
+          slug = family-budget-network
+          plugin field = family-budget-network/family-budget-network.php
+          release asset = family-budget-network.zip
+          EOF
+
+          cat > README.md <<EOF
+          # Family Budget Network PRO
+
+          Active source: family-budget-network/
+
+          Main plugin file: family-budget-network/family-budget-network.php
+
+          Current version: $VERSION
+          EOF
+
+          cat > CHANGELOG.md <<EOF
+          # Changelog
+
+          ## $VERSION
+
+          - Rebuilt repository structure.
+          - Active source moved to family-budget-network/.
+          - Fixed updater plugin slug.
+          - Fixed Invalid plugin slug.
+          - Release ZIP now builds from correct source folder.
+          EOF
+
+          git add -A
+          git commit -m "Rebuild Family Budget structure $VERSION" || echo "No changes"
+          git push
+
+      - name: Build ZIP
+        run: |
+          rm -rf build family-budget-network.zip
+          mkdir -p build
+          cp -R family-budget-network build/family-budget-network
 
           cd build
           zip -r ../family-budget-network.zip family-budget-network
@@ -107,39 +211,17 @@ jobs:
 
           ls -lh family-budget-network.zip
 
-      - name: Create GitHub Release
-        if: steps.version.outputs.has_release == 'true'
+      - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-
           gh release view "$VERSION" >/dev/null 2>&1 && gh release delete "$VERSION" -y --cleanup-tag || true
 
           gh release create "$VERSION" family-budget-network.zip \
-            --title "Family Budget Network PRO ${VERSION}" \
-            --notes "Family Budget Network PRO ${VERSION}
+            --title "Family Budget Network PRO $VERSION" \
+            --notes "Family Budget Network PRO $VERSION
 
-          Automated release from Issue #${{ github.event.issue.number }}.
-
-          ZIP: family-budget-network.zip"
-
-      - name: Comment result
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const version = '${{ steps.version.outputs.version }}';
-            const hasRelease = '${{ steps.version.outputs.has_release }}';
-
-            let body = 'AI task finished. Changes were committed.';
-            if (hasRelease === 'true') {
-              body += '\n\nRelease created: https://github.com/portallcomua/familybudget/releases/tag/' + version;
-              body += '\nZIP: family-budget-network.zip';
-            }
-
-            github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body
-            })
+          - Correct plugin structure
+          - Fixed Invalid plugin slug
+          - ZIP built from family-budget-network/"
