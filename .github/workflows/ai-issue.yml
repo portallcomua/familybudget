@@ -1,6 +1,6 @@
 name: Family Budget Release
 
-on:
+'on':
   workflow_dispatch:
     inputs:
       release_version:
@@ -16,7 +16,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
       - name: Configure git
         run: |
@@ -31,19 +32,21 @@ jobs:
           mkdir -p family-budget-network
 
           if [ -f family-budget-network-4.1.0-beta.zip ]; then
+            rm -rf /tmp/fbn
             mkdir -p /tmp/fbn
             unzip -oq family-budget-network-4.1.0-beta.zip -d /tmp/fbn
-            SRC=$(find /tmp/fbn -type f -name "family-budget-network.php" | head -1 | xargs dirname)
-            if [ -n "$SRC" ]; then
-              cp -R "$SRC"/. family-budget-network/
-              mv family-budget-network-4.1.0-beta.zip old_version/ || true
+            SRC_FILE=$(find /tmp/fbn -type f -name "family-budget-network.php" | head -1)
+            if [ -n "$SRC_FILE" ]; then
+              SRC_DIR=$(dirname "$SRC_FILE")
+              cp -R "$SRC_DIR"/. family-budget-network/
+              mv -f family-budget-network-4.1.0-beta.zip old_version/ || true
             fi
           fi
 
           if [ -f family-budget-network.php ]; then
-            cp family-budget-network.php old_version/root-family-budget-network.php
+            cp -f family-budget-network.php old_version/root-family-budget-network.php
             if [ ! -f family-budget-network/family-budget-network.php ]; then
-              cp family-budget-network.php family-budget-network/family-budget-network.php
+              cp -f family-budget-network.php family-budget-network/family-budget-network.php
             fi
             rm -f family-budget-network.php
           fi
@@ -60,98 +63,13 @@ jobs:
           perl -0777 -i -pe "s/\$plugin_info->slug\s*=\s*\$plugin_slug;/\$plugin_info->slug = 'family-budget-network';\n        \$plugin_info->plugin = 'family-budget-network\/family-budget-network.php';/g" family-budget-network/family-budget-network.php
           perl -0777 -i -pe "s/\$checked_data->response\[\$plugin_slug\]\s*=\s*\$plugin_info;/\$checked_data->response['family-budget-network\/family-budget-network.php'] = \$plugin_info;/g" family-budget-network/family-budget-network.php
 
-          if ! grep -q "fbm_github_plugin_info" family-budget-network/family-budget-network.php; then
-            cat >> family-budget-network/family-budget-network.php <<'PHP'
-
-add_filter('plugins_api', 'fbm_github_plugin_info', 20, 3);
-function fbm_github_plugin_info($result, $action, $args) {
-    if ($action !== 'plugin_information' || empty($args->slug) || $args->slug !== 'family-budget-network') {
-        return $result;
-    }
-
-    $response = wp_remote_get('https://api.github.com/repos/portallcomua/familybudget/releases/latest', array(
-        'timeout' => 15,
-        'headers' => array(
-            'Accept' => 'application/vnd.github+json',
-            'User-Agent' => 'FamilyBudgetUpdater'
-        )
-    ));
-
-    if (is_wp_error($response)) {
-        return $result;
-    }
-
-    $release_data = json_decode(wp_remote_retrieve_body($response), true);
-    if (empty($release_data['tag_name'])) {
-        return $result;
-    }
-
-    $info = new stdClass();
-    $info->name = 'Family Budget Network PRO';
-    $info->slug = 'family-budget-network';
-    $info->version = ltrim($release_data['tag_name'], 'v');
-    $info->author = '<a href="https://github.com/portallcomua">UAServer</a>';
-    $info->homepage = 'https://github.com/portallcomua/familybudget';
-    $info->sections = array(
-        'description' => 'Керування бюджетом, комунальними платежами, інтернетом та мобільним.',
-        'changelog' => !empty($release_data['body']) ? nl2br(esc_html($release_data['body'])) : ''
-    );
-
-    if (!empty($release_data['assets'])) {
-        foreach ($release_data['assets'] as $asset) {
-            if (!empty($asset['name']) && $asset['name'] === 'family-budget-network.zip') {
-                $info->download_link = $asset['browser_download_url'];
-                break;
-            }
-        }
-    }
-
-    return $info;
-}
-PHP
-          fi
-
           rm -f AI_TEST.md changelog.md
 
-          cat > AI_RULES.md <<EOF
-# AI Rules
+          printf '%s\n' "# AI Rules" "" "Active source: family-budget-network/" "" "Main plugin file: family-budget-network/family-budget-network.php" "" "Never edit root family-budget-network.php." "Never use current/ as active source." "Build release ZIP only from family-budget-network/." "ZIP must contain family-budget-network/family-budget-network.php." "" "Updater:" "slug = family-budget-network" "plugin field = family-budget-network/family-budget-network.php" "release asset = family-budget-network.zip" > AI_RULES.md
 
-Active source: family-budget-network/
+          printf '%s\n' "# Family Budget Network PRO" "" "Active source: family-budget-network/" "" "Main plugin file: family-budget-network/family-budget-network.php" "" "Current version: $VERSION" > README.md
 
-Main plugin file: family-budget-network/family-budget-network.php
-
-Never edit root family-budget-network.php.
-Never use current/ as active source.
-Build release ZIP only from family-budget-network/.
-ZIP must contain family-budget-network/family-budget-network.php.
-
-Updater:
-slug = family-budget-network
-plugin field = family-budget-network/family-budget-network.php
-release asset = family-budget-network.zip
-EOF
-
-          cat > README.md <<EOF
-# Family Budget Network PRO
-
-Active source: family-budget-network/
-
-Main plugin file: family-budget-network/family-budget-network.php
-
-Current version: $VERSION
-EOF
-
-          cat > CHANGELOG.md <<EOF
-# Changelog
-
-## $VERSION
-
-- Rebuilt repository structure.
-- Active source moved to family-budget-network/.
-- Fixed updater plugin slug.
-- Fixed Invalid plugin slug.
-- Release ZIP now builds from correct source folder.
-EOF
+          printf '%s\n' "# Changelog" "" "## $VERSION" "" "- Rebuilt repository structure." "- Active source moved to family-budget-network/." "- Fixed updater plugin slug." "- Fixed Invalid plugin slug." "- Release ZIP now builds from correct source folder." > CHANGELOG.md
 
           git add -A
           git commit -m "Rebuild Family Budget structure $VERSION" || true
@@ -160,7 +78,7 @@ EOF
       - name: Build ZIP
         run: |
           rm -rf build family-budget-network.zip
-          mkdir build
+          mkdir -p build
           cp -R family-budget-network build/family-budget-network
           cd build
           zip -r ../family-budget-network.zip family-budget-network
@@ -172,9 +90,7 @@ EOF
         run: |
           VERSION="${{ github.event.inputs.release_version }}"
           gh release view "$VERSION" >/dev/null 2>&1 && gh release delete "$VERSION" -y --cleanup-tag || true
-          gh release create "$VERSION" family-budget-network.zip \
-            --title "Family Budget Network PRO $VERSION" \
-            --notes "Family Budget Network PRO $VERSION
+          gh release create "$VERSION" family-budget-network.zip --title "Family Budget Network PRO $VERSION" --notes "Family Budget Network PRO $VERSION
 
           - Correct plugin structure
           - Fixed Invalid plugin slug
