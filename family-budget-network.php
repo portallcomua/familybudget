@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Family Budget Network PRO
  * Description: Керування бюджетом, комунальними платежами, інтернетом та мобільним
- * Version: 4.1.1 beta
+ * Version: 4.1.2
  * Author: Your Name
  * License: GPL v2 or later
  */
@@ -41,7 +41,20 @@ function fbm_check_for_plugin_update($checked_data) {
         $plugin_info->slug = $plugin_slug;
         $plugin_info->new_version = $release_data['tag_name'];
         $plugin_info->url = $release_data['html_url'];
-        $plugin_info->package = $release_data['zipball_url'];
+
+        // Check for the specific release asset
+        $asset_url = '';
+        if (!empty($release_data['assets'])) {
+            foreach ($release_data['assets'] as $asset) {
+                if ($asset['name'] === 'family-budget-network.zip') {
+                    $asset_url = $asset['browser_download_url'];
+                    break;
+                }
+            }
+        }
+
+        // Use the asset URL if available, otherwise fallback to zipball
+        $plugin_info->package = $asset_url ? $asset_url : $release_data['zipball_url'];
         $checked_data->response[$plugin_slug] = $plugin_info;
     }
 
