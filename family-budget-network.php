@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Family Budget Network PRO
  * Description: Керування бюджетом, комунальними платежами, інтернетом та мобільним
- * Version: 4.1.2
+ * Version: 4.2.1
  * Author: Your Name
  * License: GPL v2 or later
  */
