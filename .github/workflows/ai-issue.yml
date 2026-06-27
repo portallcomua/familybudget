@@ -2,7 +2,7 @@ name: AI Issue Worker
 
 on:
   issues:
-    types: [opened, edited]
+    types: [opened, edited, reopened]
 
 permissions:
   contents: write
@@ -16,16 +16,26 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "familybudget-ai-bot"
+          git config user.email "actions@github.com"
 
       - name: Prepare task
         run: |
           cat > task.txt <<'EOF'
-          Ти працюєш з WordPress-плагіном Family Budget.
-          Виконай задачу з GitHub Issue.
-          Не видаляй існуючий функціонал.
-          Пиши код акуратно, без ламання структури.
+          You are working on the WordPress plugin repository portallcomua/familybudget.
+
+          IMPORTANT RULES:
+          - Do not remove existing plugin functionality.
+          - Keep changes small and safe.
+          - If Release-Version is provided, update the plugin version.
+          - Main plugin file: family-budget-network.php
+          - WordPress plugin slug/folder: family-budget-network
+          - Release ZIP name: family-budget-network.zip
+          - GitHub release asset must be used by updater if possible.
+          - Do not put old_version, current, .github, test files, README.md, Todo.md, changelog.md or old ZIP files inside plugin ZIP.
 
           ISSUE TITLE:
           ${{ github.event.issue.title }}
@@ -34,45 +44,102 @@ jobs:
           ${{ github.event.issue.body }}
           EOF
 
+          cat > issue_body.txt <<'EOF'
+          ${{ github.event.issue.body }}
+          EOF
+
+      - name: Extract release version
+        id: version
+        run: |
+          VERSION=$(grep -Eio '^Release-Version:[[:space:]]*[0-9A-Za-z._-]+' issue_body.txt | head -1 | sed -E 's/Release-Version:[[:space:]]*//I' | tr -d '\r')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [ -n "$VERSION" ]; then
+            echo "has_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install Aider
         run: |
           python -m pip install --upgrade pip
           pip install aider-chat
 
-      - name: Run AI edit
+      - name: Run Aider
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           aider --yes --auto-commits --message-file task.txt
 
+      - name: Force plugin version if Release-Version exists
+        if: steps.version.outputs.has_release == 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [ -f "family-budget-network.php" ]; then
+            perl -0777 -i -pe "s/Version:\s*.*$/Version: ${VERSION}/m" family-budget-network.php
+          fi
+
+          git add family-budget-network.php || true
+          git commit -m "chore: prepare release ${VERSION}" || echo "No version changes"
+
       - name: Push changes
         run: |
-          git config user.name "familybudget-ai-bot"
-          git config user.email "actions@github.com"
           git push || echo "Nothing to push"
 
-      - name: Get Current Date for Release
-        id: date
-        run: echo "date=$(date +'%Y.%m.%d-%H%M')" >> $GITHUB_OUTPUT
+      - name: Build plugin ZIP
+        if: steps.version.outputs.has_release == 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
 
-      - name: Auto Create GitHub Release
-        # Спрацює, якщо в тексті або заголовку є слово "реліз" або "release"
-        if: contains(github.event.issue.title, 'реліз') || contains(github.event.issue.body, 'реліз') || contains(github.event.issue.title, 'release') || contains(github.event.issue.body, 'release')
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: "v${{ steps.date.outputs.date }}"
-          name: "Release v${{ steps.date.outputs.date }}"
-          body: "Автоматичний реліз від ШІ на основі Issue #${{ github.event.issue.number }}."
-          draft: false
-          prerelease: false
+          rm -rf build dist family-budget-network.zip
+          mkdir -p build/family-budget-network
+
+          cp family-budget-network.php build/family-budget-network/
+
+          for item in admin public includes assets templates languages vendor license uninstall.php readme.txt; do
+            if [ -e "$item" ]; then
+              cp -R "$item" build/family-budget-network/
+            fi
+          done
+
+          cd build
+          zip -r ../family-budget-network.zip family-budget-network
+          cd ..
+
+          ls -lh family-budget-network.zip
+
+      - name: Create GitHub Release
+        if: steps.version.outputs.has_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          gh release view "$VERSION" >/dev/null 2>&1 && gh release delete "$VERSION" -y --cleanup-tag || true
+
+          gh release create "$VERSION" family-budget-network.zip \
+            --title "Family Budget Network PRO ${VERSION}" \
+            --notes "Family Budget Network PRO ${VERSION}
+
+          Automated release from Issue #${{ github.event.issue.number }}.
+
+          ZIP: family-budget-network.zip"
 
       - name: Comment result
         uses: actions/github-script@v7
         with:
           script: |
+            const version = '${{ steps.version.outputs.version }}';
+            const hasRelease = '${{ steps.version.outputs.has_release }}';
+
+            let body = 'AI task finished. Changes were committed.';
+            if (hasRelease === 'true') {
+              body += '\n\nRelease created: https://github.com/portallcomua/familybudget/releases/tag/' + version;
+              body += '\nZIP: family-budget-network.zip';
+            }
+
             github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: 'AI workflow finished. Файли відредаговано, новий реліз створено успішно!'
+              body
             })
