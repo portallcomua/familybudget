@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Family Budget Network PRO
  * Description: Керування бюджетом, комунальними платежами, інтернетом та мобільним
- * Version: 2.2.1
+ * Version: 4.1.1 beta
  * Author: Your Name
  * License: GPL v2 or later
  */
@@ -11,7 +11,42 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-// ============================================
+add_action('init', 'fbm_hide_admin_bar');
+function fbm_hide_admin_bar() {
+    if (!current_user_can('administrator') && !is_admin()) {
+        add_filter('show_admin_bar', '__return_false');
+    }
+}
+
+// GitHub Updater
+add_filter('pre_set_site_transient_update_plugins', 'fbm_check_for_plugin_update');
+function fbm_check_for_plugin_update($checked_data) {
+    global $wp_version;
+    if (empty($checked_data->checked)) {
+        return $checked_data;
+    }
+
+    $plugin_slug = plugin_basename(__FILE__);
+    $plugin_data = get_plugin_data(__FILE__);
+    $current_version = $plugin_data['Version'];
+
+    $response = wp_remote_get('https://api.github.com/repos/portallcomua/familybudget/releases/latest');
+    if (is_wp_error($response)) {
+        return $checked_data;
+    }
+
+    $release_data = json_decode(wp_remote_retrieve_body($response), true);
+    if (version_compare($current_version, $release_data['tag_name'], '<')) {
+        $plugin_info = new stdClass();
+        $plugin_info->slug = $plugin_slug;
+        $plugin_info->new_version = $release_data['tag_name'];
+        $plugin_info->url = $release_data['html_url'];
+        $plugin_info->package = $release_data['zipball_url'];
+        $checked_data->response[$plugin_slug] = $plugin_info;
+    }
+
+    return $checked_data;
+}
 // 1. СТВОРЕННЯ ТАБЛИЦЬ
 // ============================================
 function fbm_activate() {
