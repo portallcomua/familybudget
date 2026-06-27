@@ -69,91 +69,90 @@ jobs:
             exit 1
           fi
 
-          python3 - <<PY
+          python3 - <<'PY'
           from pathlib import Path
           import re
 
-          version = "$VERSION"
+          version = "${{ steps.version.outputs.version }}"
           p = Path("family-budget-network/family-budget-network.php")
           s = p.read_text(encoding="utf-8", errors="ignore")
 
-          s = re.sub(r"(\\*\\s*Version:\\s*).*", r"\\g<1>" + version, s)
-          s = re.sub(r"(\\*\\s*Author:\\s*).*", r"\\g<1>UAServer", s)
+          s = re.sub(r"(\*\s*Version:\s*).*", r"\g<1>" + version, s)
+          s = re.sub(r"(\*\s*Author:\s*).*", r"\g<1>UAServer", s)
 
           s = re.sub(
-              r"\\$plugin_slug\\s*=\\s*plugin_basename\\(__FILE__\\);",
-              "$plugin_slug = 'family-budget-network';\\n    $plugin_file = 'family-budget-network/family-budget-network.php';",
+              r"\$plugin_slug\s*=\s*plugin_basename\(__FILE__\);",
+              "$plugin_slug = 'family-budget-network';\n    $plugin_file = 'family-budget-network/family-budget-network.php';",
               s
           )
 
           s = re.sub(
-              r"\\$plugin_info->slug\\s*=\\s*\\$plugin_slug;",
-              "$plugin_info->slug = 'family-budget-network';\\n        $plugin_info->plugin = 'family-budget-network/family-budget-network.php';",
+              r"\$plugin_info->slug\s*=\s*\$plugin_slug;",
+              "$plugin_info->slug = 'family-budget-network';\n        $plugin_info->plugin = 'family-budget-network/family-budget-network.php';",
               s
           )
 
           s = re.sub(
-              r"\\$checked_data->response\\[\\$plugin_slug\\]\\s*=\\s*\\$plugin_info;",
+              r"\$checked_data->response\[\$plugin_slug\]\s*=\s*\$plugin_info;",
               "$checked_data->response['family-budget-network/family-budget-network.php'] = $plugin_info;",
               s
           )
 
           if "fbm_github_plugin_info" not in s:
-              s += r'''
+              s += """
+          add_filter('plugins_api', 'fbm_github_plugin_info', 20, 3);
+          function fbm_github_plugin_info($result, $action, $args) {
+              if ($action !== 'plugin_information' || empty($args->slug) || $args->slug !== 'family-budget-network') {
+                  return $result;
+              }
 
-add_filter('plugins_api', 'fbm_github_plugin_info', 20, 3);
-function fbm_github_plugin_info($result, $action, $args) {
-    if ($action !== 'plugin_information' || empty($args->slug) || $args->slug !== 'family-budget-network') {
-        return $result;
-    }
+              $response = wp_remote_get('https://api.github.com/repos/portallcomua/familybudget/releases/latest', array(
+                  'timeout' => 15,
+                  'headers' => array(
+                      'Accept' => 'application/vnd.github+json',
+                      'User-Agent' => 'FamilyBudgetUpdater'
+                  )
+              ));
 
-    $response = wp_remote_get('https://api.github.com/repos/portallcomua/familybudget/releases/latest', array(
-        'timeout' => 15,
-        'headers' => array(
-            'Accept' => 'application/vnd.github+json',
-            'User-Agent' => 'FamilyBudgetUpdater'
-        )
-    ));
+              if (is_wp_error($response)) {
+                  return $result;
+              }
 
-    if (is_wp_error($response)) {
-        return $result;
-    }
+              $release_data = json_decode(wp_remote_retrieve_body($response), true);
+              if (empty($release_data['tag_name'])) {
+                  return $result;
+              }
 
-    $release_data = json_decode(wp_remote_retrieve_body($response), true);
-    if (empty($release_data['tag_name'])) {
-        return $result;
-    }
+              $info = new stdClass();
+              $info->name = 'Family Budget Network PRO';
+              $info->slug = 'family-budget-network';
+              $info->version = ltrim($release_data['tag_name'], 'v');
+              $info->author = '<a href="https://github.com/portallcomua">UAServer</a>';
+              $info->homepage = 'https://github.com/portallcomua/familybudget';
+              $info->sections = array(
+                  'description' => 'Керування бюджетом, комунальними платежами, інтернетом та мобільним.',
+                  'changelog' => !empty($release_data['body']) ? nl2br(esc_html($release_data['body'])) : ''
+              );
 
-    $info = new stdClass();
-    $info->name = 'Family Budget Network PRO';
-    $info->slug = 'family-budget-network';
-    $info->version = ltrim($release_data['tag_name'], 'v');
-    $info->author = '<a href="https://github.com/portallcomua">UAServer</a>';
-    $info->homepage = 'https://github.com/portallcomua/familybudget';
-    $info->sections = array(
-        'description' => 'Керування бюджетом, комунальними платежами, інтернетом та мобільним.',
-        'changelog' => !empty($release_data['body']) ? nl2br(esc_html($release_data['body'])) : ''
-    );
+              if (!empty($release_data['assets'])) {
+                  foreach ($release_data['assets'] as $asset) {
+                      if (!empty($asset['name']) && $asset['name'] === 'family-budget-network.zip') {
+                          $info->download_link = $asset['browser_download_url'];
+                          break;
+                      }
+                  }
+              }
 
-    if (!empty($release_data['assets'])) {
-        foreach ($release_data['assets'] as $asset) {
-            if (!empty($asset['name']) && $asset['name'] === 'family-budget-network.zip') {
-                $info->download_link = $asset['browser_download_url'];
-                break;
-            }
-        }
-    }
-
-    return $info;
-}
-'''
+              return $info;
+          }
+          """
 
           p.write_text(s, encoding="utf-8")
           PY
 
           rm -f AI_TEST.md changelog.md
 
-          cat > AI_RULES.md <<EOF
+          cat > AI_RULES.md <<'EOF'
           # AI Rules
 
           Active source:
