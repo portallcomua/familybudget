@@ -26,7 +26,7 @@ function fbm_check_for_plugin_update($checked_data) {
         return $checked_data;
     }
 
-    $plugin_slug = plugin_basename(__FILE__);
+    $plugin_slug = 'family-budget-network/family-budget-network.php';
     $plugin_data = get_plugin_data(__FILE__);
     $current_version = $plugin_data['Version'];
 
@@ -38,7 +38,7 @@ function fbm_check_for_plugin_update($checked_data) {
     $release_data = json_decode(wp_remote_retrieve_body($response), true);
     if (version_compare($current_version, $release_data['tag_name'], '<')) {
         $plugin_info = new stdClass();
-        $plugin_info->slug = $plugin_slug;
+        $plugin_info->slug = 'family-budget-network';
         $plugin_info->new_version = $release_data['tag_name'];
         $plugin_info->url = $release_data['html_url'];
 
@@ -55,7 +55,7 @@ function fbm_check_for_plugin_update($checked_data) {
 
         // Use the asset URL if available, otherwise fallback to zipball
         $plugin_info->package = $asset_url ? $asset_url : $release_data['zipball_url'];
-        $checked_data->response[$plugin_slug] = $plugin_info;
+        $checked_data->response['family-budget-network/family-budget-network.php'] = $plugin_info;
     }
 
     return $checked_data;
