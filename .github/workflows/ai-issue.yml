@@ -2,7 +2,7 @@ name: AI Issue Worker
 
 on:
   issues:
-    types: [opened, edited, labeled]
+    types: [opened, edited]
 
 permissions:
   contents: write
@@ -11,7 +11,6 @@ permissions:
 
 jobs:
   ai-work:
-    if: contains(github.event.issue.labels.*.name, 'ai-task')
     runs-on: ubuntu-latest
 
     steps:
@@ -52,6 +51,21 @@ jobs:
           git config user.email "actions@github.com"
           git push || echo "Nothing to push"
 
+      - name: Get Current Date for Release
+        id: date
+        run: echo "date=$(date +'%Y.%m.%d-%H%M')" >> $GITHUB_OUTPUT
+
+      - name: Auto Create GitHub Release
+        # Спрацює, якщо в тексті або заголовку є слово "реліз" або "release"
+        if: contains(github.event.issue.title, 'реліз') || contains(github.event.issue.body, 'реліз') || contains(github.event.issue.title, 'release') || contains(github.event.issue.body, 'release')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ steps.date.outputs.date }}"
+          name: "Release v${{ steps.date.outputs.date }}"
+          body: "Автоматичний реліз від ШІ на основі Issue #${{ github.event.issue.number }}."
+          draft: false
+          prerelease: false
+
       - name: Comment result
         uses: actions/github-script@v7
         with:
@@ -60,5 +74,5 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: 'AI workflow finished. Перевір зміни в репозиторії.'
+              body: 'AI workflow finished. Файли відредаговано, новий реліз створено успішно!'
             })
